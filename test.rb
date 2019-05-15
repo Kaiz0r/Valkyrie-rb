@@ -24,6 +24,7 @@ bot.message(with_text: "begin the games") do |event|
 	end
 	
 	if $hungergames.time == 0 and $hungergames.gamestate == "off" then
+		$hungergames.gamemaster = event.user.name
 		hgc = $cfg.get('hgcount', 1)
 		$cfg.set('hgcount', hgc+1)
 		$hgreactor = event.channel.send("Good #{moment} and welcome to the #{humanizeInt(hgc)} Hunger Games.\nIf you wish to volunteer, react to this message!")
@@ -34,6 +35,9 @@ bot.message(with_text: "begin the games") do |event|
 			$hungergames.gamestate = "bloodbath"
 			$hungergames.beginGames()
 		end
+	else
+		puts $hungergames.time
+		puts $hungergames.gamestate
 	end
 end
 
@@ -58,6 +62,45 @@ ensure
   $stdout = old_stdout
 end
 
+bot.command(:set) do |event, key, value|
+	$cfg.set(key, value)
+	$cfg.get(key)
+end
+
+bot.command(:cfg) do |event, key, value|
+	msgs = ""
+	$cfg.data.each do |key, value|
+		if key == "token" or key == "trellotoken" or key == "trelloapikey" then
+			msgs << "#{key} => [REDACTED]\n"
+		else
+			msgs << "#{key} => #{value}\n"
+		end
+	end
+	return msgs
+end
+
+bot.command(:gamemaster) do |event, type, *args|
+	if event.user.name != $hungergames.gamemaster then return "You don't have access to this feature." end
+	if $hungergames.gamestate != "playing" then return "Game must be running first." end
+	if type == nil then return "Needs a sub-command." end
+		
+	if type == "flood" then
+		return $hungergames.worldEvent('flood')
+	end
+	if type == "fire" then
+		return $hungergames.worldEvent('fire')
+	end
+	if type == "storm" then
+		return $hungergames.worldEvent('storm')
+	end
+	if type == "swarm" then
+		return $hungergames.worldEvent('swarm', arg: args.join(" "))
+	end
+	if type == "weather" then
+		return $hungergames.setWeather(args[0])
+	end
+end
+
 bot.command(:proceed) do |event|
 	if $hungergames.gamestate == "reaping" then
 		event.channel.send("The game has not yet started, not all players are in.")
@@ -68,22 +111,23 @@ bot.command(:proceed) do |event|
 		event.channel.send($hungergames.bloodbath())
 	end
 	
-	if $hungergames.time <= 6
-		event.channel.send("It is #{$hungergames.humanizeTime}\n#{$hungergames.proceed()}")
-
+	event.channel.send("It is a #{$hungergames.weather} #{$hungergames.humanizeTime} in the arena.\n#{$hungergames.proceed()}")
+	if $hungergames.gamestate == "playing" then
 		$hungergames.shift
-		return
 	end
+	return
 end
 
 bot.command(:hg) do |event|
-	event << "It is #{$hungergames.humanizeTime}, the game is #{$hungergames.gamestate}\n\n"
+	event << "**#{$hungergames.gamemaster}'s game**"
+	event << "It is a #{$hungergames.weather} #{$hungergames.humanizeTime}, the game is #{$hungergames.gamestate}\n\n"
 	event << $hungergames.humanizeDistricts
 
 end
 
 bot.command(:endgame) do |event|
 	$hungergames.endGames()
+	"The game has ended."
 end
 
 bot.command(:tributes) do |event|
@@ -107,8 +151,11 @@ bot.command(:sponsor) do |event, player, item|
 	players = $hungergames.alivePlayers
 	for i in 0...players.size
 		if player == players[i].name
-			$hungergames.sponsor(player[i], event.user.name, item)
-			event.channel.send("#{players[i].name} has been sponsored.")
+			if item == nil
+				item = "food"
+			end
+			$hungergames.sponsor(players[i], event.user.name, item)
+			event.channel.send("#{players[i].name} has been sponsored by #{event.user.name}, giving #{item}.")
 			return
 		end
 	end
@@ -118,6 +165,7 @@ bot.command(:sponsors) do |event|
 	msg = ""
 	for i in 0...$hungergames.sponsors.size
 		s = $hungergames.sponsors[i]
+		p s
 		msg << "#{s['target'].name}, sponsored by #{s['sender']}. (#{s['item']})\n"
 	end
 	return msg

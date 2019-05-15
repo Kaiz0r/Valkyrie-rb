@@ -1,40 +1,67 @@
 require_relative 'libkaiser.rb'
+=begin -------------------------------------------
 
-# Add a !sponser command
-# Sponser gets added to the info list
-# Sponser event now checks if theyre in the sponser list before giving items
+Add Betting command to make bets on who wins
+config for each users money, default to 50
 
-# Add a Gamemaster command
-# Event, instead of triggering the scene like normal, triggers a World Event that effects everyone
-# World Event 1 - Fire spreads through forest, effects; damage, avoid, death
-# 2 - Like 1 but flooding
-# 3+ Wild Animals attack event
+Just add more events
 
-# Add Betting command to make bets on who wins
-# config for each users money, default to 50
+Add event for "UseItem", which checks their inventory for items, uses one randomly
+If item cant be used (full health heal) or no items in inventory, run a generic Wandering message
 
-# Just add more events
+At night, if player has fort, they heal more naturally
 
-# Add event for "UseItem", which checks their inventory for items, uses one randomly
-# If item cant be used (full health heal) or no items in inventory, run a generic Wandering message
+Test logic for sponsor recieves
 
-# Build a fort event, adds an owned "fort" to the world
-# Attack fort event, chance to take over and kill the occupant or burn it down
-# At night, if player has fort, they heal more naturally
+Alliance logic 
+In Fights, dont add people who are in alliance
+At start, add people in the districts to eachothers alliance
+Negate alliances if the number of players left is alliances.size - 1
 
+highest score record config
+
+add inventory logic to the fight event
+each player rolls, if they have weapons, add the PWR numbers to the roll
+
+Weather system
+Gamemaster command to shift weather
+Weather tracking in humanize
+Storm world event changes weather to stormy
+Add some effects in some events based on weather
+=end -------------------------------------------
 class Medkit
-	def use(target)
-		target.heal = 50
-	end
+	TYPE = "consumable"
+	NAME = "Medkit"
+	ARTICLE = "a"
+	PWR = 10
 end
 
 class Bread
-	def use(target)
-		target.heal = 50
-	end
+	TYPE = "consumable"
+	NAME = "Bread"
+	ARTICLE = "some"
+	PWR = 3
+end
+
+class Water
+	TYPE = "consumable"
+	NAME = "Water"
+	ARTICLE = "some"
+	PWR = 2
+end
+
+class Knife
+	TYPE = "weapon"
+	NAME = "Knife"
+	ARTICLE = "a"
+	PWR = 4
 end
 
 class Bow
+	TYPE = "weapon"
+	NAME = "Bow"
+	PWR = 7
+	ARTICLE = "a"
 end
 
 class Event
@@ -59,9 +86,42 @@ class EventBuildFort < Event
 	end
 end
 
+class EventInteractFort < Event
+	def run(player)
+		builds = @world.getAllBuilds(type: 'fort')
+		if builds.size == 0 then
+			return "**#{player[0].name}** camps out in a tree.\n"
+		end
+		fort = builds.sample
+		if fort.owner.name == player[0].name then
+			player[0].heal(10)
+			"**#{player[0].name}** camps out in their fort.\n"
+		else
+			if rand(10) > 5 then
+				if rand(10) > 5 then
+					@world.debuild(fort)
+					"**#{player[0].name}** torched down **#{fort.owner.name}**'s fort.\n"
+				else
+					@world.debuild(fort)
+					fort.owner.damage(rand(5))
+					if fort.owner.health > 0 then
+						"**#{player[0].name}** torched down **#{fort.owner.name}**'s fort while they were inside, but they managed to get out in time.\n"	
+					else
+						"**#{player[0].name}** torched down **#{fort.owner.name}**'s fort while they were inside, burning down with it.\n"	
+					end
+				end
+			else
+				"**#{player[0].name}** tried to torch down **#{fort.owner.name}**'s fort but was scared off.\n"
+			end
+		end
+	end
+end
+
 class EventGrabItem < Event
 	def run(player)
-		"**#{player[0].name}** grabs a item!\n"
+		item = @world.itemPool.sample
+		player[0].pickup(item)
+		"**#{player[0].name}** grabs #{item::ARTICLE} #{item::NAME}\n"
 	end
 end
 
@@ -129,7 +189,7 @@ class EventWander < Event
 		when 2
 			"**#{player[0].name}** questions their sanity.\n"
 		when 3
-			"**#{player[0].name}** comtemplates the concept of bacon.\n"
+			"**#{player[0].name}** contemplates the concept of bacon.\n"
 		when 4
 			"**#{player[0].name}** skips stones across the water.\n"
 		when 5
@@ -183,9 +243,10 @@ class EventFight < Event
 	def run(player)
 		players = @world.alivePlayers
 		numplayers = @players
-		
+		puts "Running a fight for #{numplayers} players."
 		if numplayers >= players.size
 			numplayers = (players.size - 1)
+			puts "Redacted: Running a fight for #{numplayers} players."
 		end
 		
 		while numplayers > 0 do
@@ -214,8 +275,178 @@ class EventFight < Event
 	end
 end
 
+class WorldEvent
+	def initialize(world)
+		@world = world
+	end
+end
+
+class WorldEventFlood < WorldEvent
+	def run
+		msgs = "**A flood courses through the arena, covering every inch.**\n"
+		players = @world.alivePlayers
+		if @world.structures.size > 0 then
+			msgs << "#{@world.structures.size} structures were destroyed.\n"
+			@world.structures = []
+		end
+		
+		for i in 0...players.size
+			if players[i].health > 0 then
+				effect = rand(4)
+				case effect
+				when 0 #safe
+					msgs << "**#{players[i].name}** escaped the flooding.\n"
+				when 1 #damage 5, check death
+					players[i].damage(5)
+					if players[i].health > 0 then
+						msgs << "**#{players[i].name}** barely managed to escape.\n"
+					else
+						msgs << "**#{players[i].name}** tried valliantly to escape, but ended up slipping in to the depths.\n"
+					end
+				when 2 #damage 10, instadeath
+					players[i].damage(10)
+					msgs << "**#{players[i].name}** was caught off guard and drowns.\n"			
+				when 3 #throw someone else in, then THEY get a roll to see if they survive
+					sac = @world.alivePlayers.sample
+					sac.damage(rand(10))
+					if sac.health > 0
+						msgs << "**#{players[i].name}** throws **#{sac.name}** in to the water, but they survive.\n"
+					else
+						msgs << "**#{players[i].name}** throws **#{sac.name}** in to the water, and they drown.\n"
+					end
+				end
+			end
+		end
+		puts msgs
+		return msgs
+	end
+end
+
+class WorldEventStorm < WorldEvent
+	def run
+		msgs = "**A fierce storm rages up in the arena.**\n"
+		msgs << @world.setWeather('stormy')
+		players = @world.alivePlayers		
+		for i in 0...players.size
+			if players[i].health > 0 then
+				effect = rand(4)
+				case effect
+				when 0 #safe
+					msgs << "**#{players[i].name}** escaped from the storm.\n"
+				when 1 #damage 5, check death
+					players[i].damage(5)
+					if players[i].health > 0 then
+						msgs << "**#{players[i].name}** barely managed to dodge a bolt of lightning.\n"
+					else
+						msgs << "**#{players[i].name}** tried valliantly to escape, but was struck by lightning.\n"
+					end
+				when 2 #damage 10, instadeath
+					players[i].damage(10)
+					msgs << "**#{players[i].name}** was caught off guard, struck by lightning.\n"			
+				when 3 #throw someone else in, then THEY get a roll to see if they survive
+					sac = @world.alivePlayers.sample
+					sac.damage(rand(10))
+					if sac.health > 0
+						msgs << "**#{players[i].name}** throws **#{sac.name}** to the wild, but they survive.\n"
+					else
+						msgs << "**#{players[i].name}** kills **#{sac.name}** to take their cover .\n"
+					end
+				end
+			end
+		end
+		puts msgs
+		return msgs
+	end
+end
+
+class WorldEventFire < WorldEvent
+	def run
+		msgs = "**A forest fire ignites, spreading through the arena.**\n"
+		players = @world.alivePlayers
+		if @world.structures.size > 0 then
+			msgs << "#{@world.structures.size} structures were destroyed.\n"
+			@world.structures = []
+		end
+		
+		for i in 0...players.size
+			if players[i].health > 0 then
+				effect = rand(4)
+				case effect
+				when 0 #safe
+					msgs << "**#{players[i].name}** escaped the blaze.\n"
+				when 1 #damage 5, check death
+					players[i].damage(5)
+					if players[i].health > 0 then
+						msgs << "**#{players[i].name}** barely managed to escape.\n"
+					else
+						msgs << "**#{players[i].name}** tried valliantly to escape, but ended up slipping in to the embers and burning alive.\n"
+					end
+				when 2 #damage 10, instadeath
+					players[i].damage(10)
+					msgs << "**#{players[i].name}** was caught off guard, being burned in their sleep.\n"			
+				when 3 #throw someone else in, then THEY get a roll to see if they survive
+					sac = @world.alivePlayers.sample
+					sac.damage(rand(10))
+					if sac.health > 0
+						msgs << "**#{players[i].name}** throws **#{sac.name}** in to the fires, but they survive.\n"
+					else
+						msgs << "**#{players[i].name}** throws **#{sac.name}** in to the fires, and they catch fire, burning to death.\n"
+					end
+				end
+			end
+		end
+		puts msgs
+		return msgs
+	end
+end
+
+class WorldEventSwarm < WorldEvent
+	def run(swarm)
+		@swarm = swarm
+		msgs = "**A swarm of #{@swarm}s flood the arena, hunting down any survivors.**\n"
+		players = @world.alivePlayers
+		
+		for i in 0...players.size
+			if players[i].health > 0 then
+				
+				if @world.getBuild(players[i], type: 'fort') != nil then
+					msgs << "**#{players[i].name}** hides from the swarm in their shelter.\n"
+				else
+					effect = rand(4)
+					case effect
+					when 0 #safe
+						msgs << "**#{players[i].name}** escaped the swarm.\n"
+					when 1 #damage 5, check death
+						players[i].damage(rand(5))
+						if players[i].health > 0 then
+							msgs << "**#{players[i].name}** barely managed to escape.\n"
+						else
+							msgs << "**#{players[i].name}** tried valliantly to escape, but ended up getting caught by a #{@swarm}.\n"
+						end
+					when 2 #damage 10, instadeath
+						players[i].damage(10)
+						msgs << "**#{players[i].name}** was caught off guard and murdered by a #{@swarm}.\n"			
+					when 3 #throw someone else in, then THEY get a roll to see if they survive
+						sac = @world.alivePlayers.sample
+						sac.damage(rand(10))
+						if sac.health > 0
+							msgs << "**#{players[i].name}** throws **#{sac.name}** in to the swarm, but they manage to escape.\n"
+						else
+							msgs << "**#{players[i].name}** throws **#{sac.name}** in to the swarm, and are ripped apart by the #{@swarm}s.\n"
+						end
+					end
+				end
+			end
+		end
+		return msgs
+	end
+end
+
 class HGInfo
 	def initialize
+		@cfg = Memory.new('hungergames.json')
+		@gamemaster = ""
+		@weather = "clear"
 		@districts = []
 		@tributes = []
 		@time = 0
@@ -223,6 +454,18 @@ class HGInfo
 		#@worldTraps = []
 		@structures = []
 		@sponsors = []
+		@itemPool = [
+			Medkit,
+			Bread,
+			Bow,
+			Knife,
+			Water
+		]
+		@worldEvents = Hash.new
+		@worldEvents['flood'] = WorldEventFlood.new(self)
+		@worldEvents['fire'] =	WorldEventFire.new(self)
+		@worldEvents['swarm'] =	WorldEventSwarm.new(self)
+		@worldEvents['storm'] = WorldEventStorm.new(self)
 		@events = [
 			EventGrabItem.new(self), 
 			EventLandmine.new(self, state: 'bloodbath'), 
@@ -238,16 +481,125 @@ class HGInfo
 			EventEscapeBloodbath.new(self, state: 'bloodbath'),
 			EventEscapeBloodbath.new(self, state: 'bloodbath'),
 			EventEscapeBloodbath.new(self, state: 'bloodbath'),
+			EventEscapeBloodbath.new(self, state: 'bloodbath'),
 			EventSetTrap.new(self),
 			EventTriggersTrap.new(self),
 			EventBuildFort.new(self),
+			EventInteractFort.new(self),
 			EventFight.new(self, players: 2),
 			EventFight.new(self, players: 2),
 			EventFight.new(self, players: 3),
 			EventFight.new(self, players: 4)
 		]
 		@dead = []
+		@validWeathers = [
+			'clear',
+			'cloudy',
+			'raining',
+			'stormy'
+		]
 	end
+
+	def weather
+		@weather
+	end
+	
+	def setWeather(weather_name)
+		if @validWeathers.include?(weather_name) then
+			@weather = weather_name
+			"Weather changed to #{weather_name}\n"
+		else
+			puts "Weather name #{weather_name} isn't valid, defaulting to clear."
+			@weather = 'clear'
+			"Weather changed to clear.\n"
+		end
+	end
+	
+	def itemPool
+		@itemPool
+	end
+	
+	def bloodbath
+		msgs = ""
+		tributes = self.allPlayers
+		for i in 0 ... tributes.size
+			tribute = tributes[i]
+			ev = self.findValidEvent([tribute], state: 'bloodbath').sample
+			msgs << ev.run([tribute])
+		end
+		p msgs
+		@gamestate = "playing"
+		@time = 1
+		return msgs
+	end
+	
+	def proceed		
+		tributes = self.allPlayers
+		msgs = ""
+		for i in 0 ... tributes.size
+			tribute = tributes[i]
+			if tribute.health > 0 then
+				ev = self.findValidEvent([tribute]).sample
+				msgs << ev.run([tribute])
+			end
+		end
+		
+		msgs << self.runDead
+		return msgs
+	end	
+	
+	def runDead
+		if @dead.size > 0 then
+			msgs = "\n"
+			msgs << "The cannons fire for this rounds dead;\n"
+			for i in 0...@dead.size 
+				msgs << " - *#{@dead[i].name}* from District #{@dead[i].district}\n"
+			end
+			@dead = []
+			
+			livings = self.alivePlayers
+			if livings.size == 1 then
+				winners = @cfg.get('winners', Array.new)
+				winners.push(livings[0].name)
+				@cfg.set('winners', winners)
+				@gamestate = "ended"
+				msgs << "**#{livings[0].name}** has won with #{livings[0].kills} kills!"
+			elsif livings.size == 0 then
+				@gamestate = "ended"
+				msgs << "The game ended with no winners."
+			end
+			
+			if @gamestate == "ended" then
+				self.endGames
+			end
+			
+			return msgs
+		else
+			return ""
+		end
+	end
+	
+	def worldEvent(event, arg: "")
+		if arg == "" then
+			msgs = @worldEvents[event].run
+			msgs << self.runDead
+			puts msgs
+			return msgs			
+		else
+			msgs = @worldEvents[event].run(arg)
+			msgs << self.runDead
+			puts msgs
+			return msgs			
+		end
+	end
+	
+	def gamemaster
+		@gamemaster
+	end
+	
+	def gamemaster=(ngamemaster)
+		@gamemaster = ngamemaster
+	end	
 	
 	def sponsors
 		@sponsors
@@ -255,7 +607,7 @@ class HGInfo
 	
 	def getSponsor(player)
 		for i in 0...@sponsors.size
-			if @sponsors[i].player == player then
+			if @sponsors[i]['target'] == player then
 				ref = @sponsers[i]
 				@sponsers.delete(ref)
 				return ref
@@ -283,6 +635,10 @@ class HGInfo
 	def structures
 		@structures
 	end
+	
+	def structures=(list)
+		@structures = list
+	end	
 	
 	def getAllBuilds(owner: nil, type: "")
 		builds = []
@@ -374,53 +730,11 @@ class HGInfo
 		end		
 		return alives
 	end
-
-	def bloodbath
-		msgs = ""
-		tributes = self.allPlayers
-		for i in 0 ... tributes.size
-			tribute = tributes[i]
-			ev = self.findValidEvent([tribute], state: 'bloodbath').sample
-			msgs << ev.run([tribute])
-		end
-		p msgs
-		@gamestate = "playing"
-		@time = 1
-		return msgs
-	end
-	
-	def proceed		
-		tributes = self.allPlayers
-		msgs = ""
-		for i in 0 ... tributes.size
-			tribute = tributes[i]
-			if tribute.health > 0 then
-				ev = self.findValidEvent([tribute]).sample
-				msgs << ev.run([tribute])
-			end
-		end
-		
-		if @dead.size > 0 then
-			msgs << ""
-			msgs << "The cannons fire for this rounds dead;\n"
-			for i in 0...@dead.size 
-				msgs << " - *#{@dead[i].name}* from District #{@dead[i].district}\n"
-			end
-			@dead = []
-		end
-
-		livings = self.alivePlayers
-		if livings.size == 1 then
-			@gamestate = "ended"
-			msgs << "**#{livings[0].name}** has won with #{livings[0].kills}!"
-		elsif livings.size == 0 then
-			msgs << "The game ended with no winners."
-		end
-		return msgs
-	end
 	
 	def endGames
 		@districts = []
+		@structures = []
+		@sponsors = []
 		@gamestate = "off"
 		@time = 0
 	end
@@ -468,15 +782,15 @@ class HGInfo
 		for i in 0 ... @districts.size
 			line = "**District #{i+1}**\n"
 			if @districts[i].players[0].health > 0 then
-				line << "#{@districts[i].players[0].name} (#{@districts[i].players[0].kills} kills)\n"
+				line << "#{@districts[i].players[0].name} [#{@districts[i].players[0].humanizeHealth}] (#{@districts[i].players[0].kills} kills)\n"
 			else
-				line << "DEAD: ~~#{@districts[i].players[0].name}~~ (#{@districts[i].players[0].kills} kills)\n"
+				line << "~~#{@districts[i].players[0].name}~~ [Dead] (#{@districts[i].players[0].kills} kills)\n"
 			end
 			
 			if @districts[i].players[1].health > 0 then
-				line << "#{@districts[i].players[1].name} (#{@districts[i].players[1].kills} kills)\n"
+				line << "#{@districts[i].players[1].name} [#{@districts[i].players[0].humanizeHealth}] (#{@districts[i].players[1].kills} kills)\n"
 			else
-				line << "DEAD: ~~#{@districts[i].players[1].name}~~ (#{@districts[i].players[1].kills} kills)\n"
+				line << "~~#{@districts[i].players[1].name}~~ [Dead] (#{@districts[i].players[1].kills} kills)\n"
 			end
 			lines << line
 		end	
@@ -563,7 +877,7 @@ class HGPlayer
 
 	def drop(name)
 		for i in 0 ... @inventory.size
-			if @inventory[i].name == name then
+			if @inventory[i]::NAME == name then
 				@inventory.delete_at(i)
 				return
 			end
@@ -572,7 +886,7 @@ class HGPlayer
 
 	def findInvInd(name)
 		for i in 0 ... @inventory.size
-			if @inventory[i].name == name then
+			if @inventory[i]::NAME == name then
 				return i
 			end
 		end
@@ -602,6 +916,20 @@ class HGPlayer
 					p "Adding #{arr[i].name} alliance to #{self.name}."
 				end
 			end
+		end
+	end
+	
+	def humanizeHealth
+		if health == 0 then
+			"Dead"
+		elsif health > 0 and health <= 4 then
+			"Severely injured"
+		elsif health > 4 and health <= 7 then
+			"Injured"
+		elsif health > 7 and health <= 9 then
+			"Okay"
+		else
+			"Healthy"
 		end
 	end
 	
